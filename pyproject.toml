@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "itm"
+version = "1.0.1"
+#readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: Proprietary :: Only for use by Soar Technology, LLC and teammates",
+    "Operating System :: OS Independent",
+]
+
+urls = {Homepage = "https://github.com/ITM-Soartech/itm-analysis.git"}
+
+[tool.setuptools]
+"package-dir" = {"" = "src"}
+
+[tool.setuptools.package-data]
+ta1_server = ["**/*.yml", "**/*.yaml", "**/*.html"]
