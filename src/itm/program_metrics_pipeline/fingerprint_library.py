@@ -247,7 +247,7 @@ def normalizeProbeDataToReferenceFrame(all_data, scenarios):
 # If the dropNans flag is true, when merging the session & probe data, if no probe data is found for an item in the session data, 
 # that item is dropped so only valid rows are returned (not rows that have a Nan for score or KDMA). This
 # happens when filtering has been applied prior to this call (e.g., such as selecting only a subset of probes to include in analysis). 
-def getDMFingerprintData(probe_data, session_data, scenarios, dmIDs, dropNans = True):
+def getDMFingerprintData(probe_data, session_data, dmIDs, dropNans = True):
 
     # Keep just the specified users
     try:
@@ -464,7 +464,92 @@ def computeAlignment_2feature(
     print("Finished with alignment")
     return alignment_df
 
+# Compare similarity of target and aligner by mathematical difference between each of their probe scores. 
+# This computes the alignment for each aligner/target pair found in the input arguments. 
+def compute_mathematical_alignment(
+        all_data: dict,
+        alignerProfiles: dict[str, KDMAProfile],
+        targetProfiles: dict[str, KDMAProfile],
+        kdma_id: str):
+    al_name = list(alignerProfiles.keys())[0]
+    tg_name = list(targetProfiles.keys())[0]
 
+    al_scn = list(all_data['sessions'].set_index('SessionID').loc[al_name].reset_index()['ScenarioID'].drop_duplicates())[0]
+    tg_scenarios = all_data['sessions'].set_index('SessionID').loc[tg_name].reset_index()
+    tg_scn = ''
+    if 'ScenarioID' in tg_scenarios.keys():
+        tg_scn = list(tg_scenarios['ScenarioID'].drop_duplicates())[0]
+    else:
+        # hacky hardcode, iloc: 1=scenario, 2=probeid, 3=probechoice
+        tg_scn = tg_scenarios[tg_name].iloc[1]
+    scenarios = list(set([al_scn, tg_scn]))
+
+    probe_data = normalizeProbeDataToReferenceFrame(all_data, scenarios)
+    alignerData = getDMFingerprintData(probe_data, all_data['sessions'], alignerProfiles.keys())
+    targetData = getDMFingerprintData(probe_data, all_data['sessions'], targetProfiles.keys())
+    
+    aligner_probes = {}
+    for al in alignerProfiles.values():
+        for session_id, subdf in alignerData.groupby('SessionID'):
+            if session_id == al.dm_id:
+                aligner_choices = {}
+                for probeID, choiceID in zip(subdf['SceneID'], subdf['ChoiceID']):
+                    aligner_choices[probeID] = choiceID
+                aligner_probes[session_id] = aligner_choices
+    aligner_probes = pd.DataFrame.from_dict(aligner_probes)
+    
+    target_probes = {}
+    for tg in targetProfiles.values():
+        for session_id, subdf in targetData.groupby('SessionID'):
+            if session_id == tg.dm_id:
+                target_choices = {}
+                for probeID, choiceID in zip(subdf['SceneID'], subdf['ChoiceID']):
+                    target_choices[probeID] = choiceID
+                target_probes[session_id] = target_choices
+    target_probes = pd.DataFrame.from_dict(target_probes)
+
+    # print("AL probes")
+    # print(aligner_probes)
+    # print("TG probes")
+    # print(target_probes)
+
+    alignment_data = computeAlignment_2feature(alignerProfiles, targetProfiles, kdma_id)
+    alignment_results = []  # List to store alignment results
+
+    kdma_id = KDMAId(kdma_id)
+    
+    count = 0
+    for al_key, al_choices in aligner_probes.items():
+        for tg_key, tg_choices in target_probes.items():
+            score = 0
+            count +=1
+            for probeID in tg_choices.keys():
+                aligner_row = probe_data.loc[probe_data['SceneID'].eq(probeID) & 
+                                            probe_data['ChoiceID'].eq(al_choices[probeID])]
+                target_row = probe_data.loc[probe_data['SceneID'].eq(probeID) & 
+                                            probe_data['ChoiceID'].eq(tg_choices[probeID])]
+                ascore = aligner_row['Score'].to_list()[0]
+                tscore = target_row['Score'].to_list()[0]
+                choice_score = abs(ascore - tscore)
+                score += choice_score
+            
+            alignment = 1-(score/(len(tg_choices.keys())*.9))
+            computed_alignment = alignment_data.loc[alignment_data['Aligner'].eq(al_key.split('_')[0]) & 
+                                                    alignment_data['Target'].eq(tg_key.split('_')[0])]
+            assert(len(computed_alignment)==1)
+            computed_alignment = list(computed_alignment['Alignment_'+kdma_id.value])[0]
+            alignment_result = {'Target': tg_key.split('_')[0], 
+                                'Aligner': al_key.split('_')[0], 
+                                f'Alignment_{kdma_id.value}': alignment,
+                                'KDE_Alignment': computed_alignment,
+                                'Diff': score,
+                                'Min_Diff': 0, 
+                                'Max_Diff': len(tg_choices.keys())*.9}
+            alignment_results.append(alignment_result)
+    
+    alignment_df = pd.DataFrame(alignment_results)
+    #pprint.pprint(alignment_results)
+    return alignment_df
 
 # +
 # Visualization functions for visualizing 2 Feature KDEs & KDE alignments
